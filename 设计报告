@@ -1,0 +1,481 @@
+
+1）使用工具
+ 微信开发者工具，vscode，github
+2）设计背景
+ 人们在出门的时候经常会遇到找厕所的难题，前些年提出的厕所革命就是为了在广大农村以及城市为百姓彻底解决厕所问题，
+但是人们往往还面临着找厕所的难题。如何找到身边可能近在咫尺的厕所，解决厕所问题的最后一公里，成为了很多经常出门的
+人们的一大需求
+3）实现难点
+   1.微信小程序交互界面的搭建
+   2.对其他小程序的调用
+3）关键技术和创新点
+   1.通过wxml和wcss搭建小程序的外观框架
+   2.使用js实现小程序的具体功能
+   3.使用地图程序的api接口实现地图以及导航功能的调用
+4）部分代码展示
+
+// 引入SDK核心类
+var QQMapWX = require('../../resources/map/qqmap-wx-jssdk.js');
+var qqmapsdk;
+//获取应用实例
+var app = getApp()
+Page({
+  data: {
+    list: [],
+    latitude: 0,
+    longitude: 0,
+    scrollTop: 0,
+    size: 0,
+    onLine: true,
+    noAuth: false,
+    yesAuth: true
+  },
+  // 页面加载
+  onLoad: function() {
+    wx.showLoading({
+      title: "获取数据中,别急!"
+    });
+  },
+  // 页面显示
+  onShow() {
+    this.getData();
+  },
+  //获取数据
+  getData: function() {
+    var that = this;
+    // 实例化API核心类
+    qqmapsdk = new QQMapWX({
+      key: '2EQBZ-3XM36-RUTSG-MIO6B-GXH4E-B3FC5'
+    });
+    //确保人员再次移动进行定位，获取经纬度
+    wx.getLocation({
+      type: 'gcj02',
+      success: function(res) {
+        var latitude = res.latitude
+        var longitude = res.longitude
+        //console.log(res.accuracy);
+        //设置经纬度值
+        that.setData({
+          latitude: latitude,
+          longitude: longitude
+        });
+        //源码里面查询的是附近一公里的哦
+        qqmapsdk.search({
+          keyword: '厕所',
+          location: {
+            latitude: latitude,
+            longitude: longitude
+          },
+          success: function(res) {
+            //有可能是参数有问题或者是网络
+            that.setData({
+              onLine: true
+            });
+            //根据返回的结果marker在地图上面
+            let i = 0;
+            var data = res.data.map(function(item) {
+              item["NO"] = i++;
+              return item;
+            });
+            that.setList(data);
+            //关闭loading
+            wx.hideLoading();
+            //震动提示
+            wx.vibrateLong();
+          },
+          fail: function() {
+            //关闭loading
+            wx.hideLoading();
+            //有可能是参数有问题或者是网络
+            that.setData({
+              onLine: false,
+              noAuth: false,
+              yesAuth: true
+            });
+          }
+        });
+      },
+      fail: function(json) {
+        //关闭loading
+        wx.hideLoading();
+        //没有权限
+        that.setData({
+          noAuth: true,
+          yesAuth: false
+        });
+      }
+    });
+  },
+  //组装数据信息
+  setList: function(data) {
+    var that = this;
+    var result = [];
+    //循环遍历数据， 其实不做这一步也行
+    data.forEach(function(item, index) {
+      //替换一些不必要的大信息
+      var reg = new RegExp(item.ad_info.province + item.ad_info.city + item.ad_info.district);
+      var briefAddr = item.address.replace(reg, "");
+      //组装数据
+      result.push({
+        distance: item["_distance"],
+        briefAddr: briefAddr,
+        address: item.address,
+        category: item.category,
+        id: item.id,
+        latitude: item.location.lat,
+        longitude: item.location.lng,
+        name: item.title,
+        no: item.NO
+      });
+    });
+    //设置data
+    that.setData({
+      list: result,
+      size: result.length,
+      noAuth: false,
+      yesAuth: true
+    });
+  },
+  //点击列表显示本地导航信息
+  tapItem: function(e) {
+    var that = this;
+    var id = e.currentTarget.dataset.id;
+    var toilet = that.findMarkerById(id);
+    //跳转传输的值
+    var param = {
+      //基本的信息
+      latitude: that.data.latitude,
+      longitude: that.data.longitude,
+      list: that.data.list,
+      //目的地点 基本的信息
+      destination: toilet.longitude + "," + toilet.latitude,
+      briefAddr: toilet.briefAddr,
+      name: toilet.name
+    }
+    //FIXME 不让用户选择，直接打开
+    //让用户选择是使用本地自带地图还是小程序地图导航
+    /*
+    wx.showActionSheet({
+      itemList: ['高德/百度地图导航', '本地小程序导航'],
+      success: function (res) {
+        if (res.tapIndex){
+          wx.navigateTo({
+            url: '../location/location?param=' + JSON.stringify(param)
+          });
+        }else{
+          //打开本地应用进行导航
+          wx.openLocation({
+            latitude: param.latitude,
+            longitude: param.longitude,
+            name: param.name,
+            address: param.briefAddr,
+            scale: 28
+          });
+        }
+      },
+      fail: function (res) {
+        wx.showToast({
+          title: '你可以选择一个看看效果,行不行再说',
+          icon: 'none',
+          duration: 2000
+        })
+      }
+    });
+    */
+    //打开本地应用进行导航
+    wx.openLocation({
+      latitude: param.latitude,
+      longitude: param.longitude,
+      name: param.name,
+      address: param.briefAddr,
+      scale: 30
+    });
+  },
+  //根据marker唯一id查询信息
+  findMarkerById: function(id) {
+    var that = this,
+      result = {};
+    var list = that.data.list;
+    //查询数据信息
+    for (var i = 0; i < list.length; i++) {
+      if (id === list[i].id) {
+        result = list[i];
+        break;
+      }
+    }
+    return result;
+  },
+  // 数据更新
+  doRefresh: function() {
+    wx.showLoading({
+      title: "数据更新中,别急!"
+    });
+    this.getData();
+  },
+  //再次获取权限
+  doAuth: function() {
+    var that = this;
+    wx.openSetting({
+      success: (res) => {
+        that.doRefresh();
+      }
+    })
+  },
+  // 跳转到地图显示信息界面
+  doNavToLocation: function() {
+    var that = this;
+    //跳转传输的值
+    var param = {
+      latitude: that.data.latitude,
+      longitude: that.data.longitude,
+      list: that.data.list,
+      //目的地点，默认获取最近一个点
+      destination: that.data.list[0]["longitude"] + "," + that.data.list[0]["latitude"],
+      briefAddr: that.data.list[0]["briefAddr"],
+      name: that.data.list[0]["name"]
+    }
+    //FIXME 不让用户选择
+    //让用户选择是使用本地自带地图还是小程序地图导航
+    /*
+    wx.showActionSheet({
+      itemList: ['高德/百度地图导航', '本地小程序导航'],
+      success: function (res) {
+        if (res.tapIndex) {
+          wx.navigateTo({
+            url: '../location/location?param=' + JSON.stringify(param)
+          });
+        } else {
+          //打开本地应用进行导航
+          wx.openLocation({
+            latitude: param.latitude,
+            longitude: param.longitude,
+            name: param.name,
+            address: param.briefAddr,
+            scale: 28
+          });
+        }
+      },
+      fail: function (res) {
+        wx.showToast({
+          title: '你可以选择一个看看效果,行不行再说',
+          icon: 'none',
+          duration: 2000
+        })
+      }
+    });
+    */
+    wx.openLocation({
+      latitude: param.latitude,
+      longitude: param.longitude,
+      name: param.name,
+      address: param.briefAddr,
+      scale: 28
+    });
+  },
+  // 关于按钮
+  doAbout: function() {
+    wx.navigateTo({
+      url: '../author/author'
+    })
+  },
+
+  onShareAppMessage: function() {
+
+  }
+})
+
+
+
+// 引入SDK核心类
+var amapFile = require('../../resources/map/amap-wx.js');
+var amapInstance;
+//获取应用实例
+var app = getApp()
+Page({
+  //数据信息
+  data: {
+    markers: [],
+    longitude: 0,
+    latitude: 0,
+    distance: '',
+    cost: '',
+    polyline: [],
+    origin: null,
+    destination: null,
+    briefAddr: null,
+    toiletName: null,
+    navigateImag: "../../images/ios7-navigate.png"
+  },
+  //页面加载事件
+  onLoad: function (option) {
+    var that = this;
+    //初始化地图接口实例
+    amapInstance = new amapFile.AMapWX({ key: 'cd17f895f7d70ef688f4bf600e067a8e' });
+    var param = JSON.parse(option.param);
+    var list = param.list,
+      //中心点位置
+      latitude = param.latitude,
+      longitude = param.longitude,
+      destination = param.destination,
+      briefAddr = param.briefAddr,
+      toiletName = param.name;
+    var result = [];
+    //数据组装
+    list.forEach(function (item, index) {
+      //为零时显示最近的气泡
+      if (!index) {
+        result.push({
+          width: 40,
+          height: 40,
+          iconPath: "/images/marker.png",
+          id: item.id,
+          latitude: item.latitude,
+          longitude: item.longitude,
+          briefAddr: item.briefAddr,
+          toiletName: item.name,
+          callout: {
+            content: "离你最近",
+            color: "#b5b1b1",
+            fontSize: 12,
+            borderRadius: 15,
+            bgColor: "#262930",
+            padding: 10,
+            display: 'ALWAYS'
+          }
+        })
+      } else {
+        result.push({
+          width: 40,
+          height: 40,
+          iconPath: "/images/marker.png",
+          id: item.id,
+          latitude: item.latitude,
+          longitude: item.longitude,
+          briefAddr: item.briefAddr,
+          toiletName: item.name
+        })
+      }
+    });
+    //赋值
+    that.setData({
+      markers: result,
+      latitude: latitude,
+      longitude: longitude,
+      briefAddr: briefAddr,
+      toiletName: toiletName
+    });
+    //初始化路径规划
+    that.doWalkingRoute(destination);
+    //TODO 设置控件定位或者复位控件，计算位置的时候需要使用系统方法，获取屏幕宽度来进行设置
+  },
+  //点击marker事件
+  doMarkertap: function (obj) {
+    var that = this;
+    //查询marker的详细信息
+    var marker = that.getMarkerById(obj.markerId);
+    that.doWalkingRoute(marker.longitude + "," + marker.latitude);
+    that.setData({
+      briefAddr: marker.briefAddr,
+      toiletName: marker.toiletName
+    });
+  },
+  //进行路径规划
+  doWalkingRoute: function (destination) {
+    var that = this;
+    //调用高德地图路径规划
+    wx.getLocation({
+      type: 'gcj02', //适用于微信的位置精度
+      success: function (res) {
+        //设置详细路径需要的值
+        that.setData({
+          origin: res.longitude + "," + res.latitude,
+          destination: destination
+        });
+        //路径规划
+        amapInstance.getWalkingRoute({
+          origin: res.longitude + "," + res.latitude,
+          destination: destination,
+          success: function (data) {
+            var points = [];
+            if (data.paths && data.paths[0] && data.paths[0].steps) {
+              var steps = data.paths[0].steps;
+              for (var i = 0; i < steps.length; i++) {
+                var poLen = steps[i].polyline.split(';');
+                for (var j = 0; j < poLen.length; j++) {
+                  points.push({
+                    longitude: parseFloat(poLen[j].split(',')[0]),
+                    latitude: parseFloat(poLen[j].split(',')[1])
+                  })
+                }
+              }
+            }
+            that.setData({
+              polyline: [{
+                points: points,
+                color: "#0091ff",
+                width: 6
+              }]
+            });
+            if (data.paths[0] && data.paths[0].distance) {
+              that.setData({
+                distance: data.paths[0].distance + ' 米'
+              });
+            }
+            if (data.paths[0] && data.paths[0].duration) {
+              that.setData({
+                cost: parseInt(data.paths[0].duration / 60) + ' 分钟'
+              });
+            }
+          },
+          fail: function (info) {
+          }
+        })
+      }
+    })
+  },
+  //根据marker的id获取详情信息
+  getMarkerById: function (id) {
+    var that = this;
+    var markers = that.data.markers;
+    var len = markers.length;
+    var result;
+    for (var i = 0; i < len; i++) {
+      if (markers[i]["id"] === id) {
+        result = markers[i];
+        break;
+      }
+    }
+    return result;
+  },
+  //详细的路径规划
+  goDetail: function () {
+    var that = this;
+    //跳转传输的值
+    var param = {
+      origin: that.data.origin,
+      destination: that.data.destination,
+    }
+    //设置点击图片效果
+    that.setData({
+      navigateImag: "../../images/ios7-navigate-click.png"
+    });
+    //修改点击状态
+    setTimeout(function () {
+      that.setData({
+        navigateImag: "../../images/ios7-navigate.png"
+      });
+      wx.navigateTo({
+        url: '../location-detail/location?param=' + JSON.stringify(param)
+      })
+    }, 200);
+  }
+})
+
+
+5）实现功能
+  该程序需要调用地图来显示周边厕所，使用地图导航的功能（本小程序中使用的时腾讯地图的导航功能），
+自动按照距离排列周边厕所，并且将最方便的路径规划并指示给行人，起到导航的作用。
+
+6）设计感悟
+  通过本次大作业，我增加了对微信小程序开发的兴趣，加强了我对js运用的理解，以及如何合理运用wxml，wcss语言
+对界面进行调配，希望自己在前端学习的道路上可以有更加长足的进步。
